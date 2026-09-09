@@ -30,3 +30,66 @@ The Terraform working directory is /home/bob/terraform.
 Right-click under the EXPLORER section in VS Code and select Open in Integrated Terminal to launch the terminal.
 
 Before submitting the task, ensure that terraform plan returns No changes. Your infrastructure matches the configuration.
+
+
+---
+
+# Solution:
+
+- `main.tf`:
+
+```tf
+resource "aws_s3_bucket" "wordpress_bucket" {
+  bucket = "xfusion-s3-29319"
+}
+
+resource "aws_s3_bucket_acl" "wordpress_bucket_acl" {
+  bucket = aws_s3_bucket.wordpress_bucket.id
+  acl    = "private"
+}
+
+resource "aws_s3_bucket" "kke_s3" {
+  bucket = var.KKE_BUCKET
+}
+resource "aws_s3_bucket_acl" "kke_bucket_acl" {
+  bucket = aws_s3_bucket.kke_s3.id
+  acl    = "private"
+}
+
+resource "terraform_data" "s3_migration" {
+  depends_on = [aws_s3_bucket.kke_s3]
+
+  provisioner "local-exec" {
+    command = "aws s3 sync s3://xfusion-s3-29319 s3://${var.KKE_BUCKET}"
+  }
+}
+```
+
+- `variables.tf`:
+
+```tf
+variable "KKE_BUCKET" {
+  type = string
+}
+```
+
+
+- `terraform.tfvars`:
+
+```tf
+KKE_BUCKET = "xfusion-sync-9623"
+```
+
+- `outputs.tf`:
+
+```tf
+output "new_kke_bucket_name" {
+  description = "name of the new bucket"
+  value       = aws_s3_bucket.kke_s3.bucket
+}
+
+output "new_kke_bucket_acl" {
+  description = "ACL of the new bucket"
+  value       = aws_s3_bucket_acl.kke_bucket_acl.acl
+}
+```
