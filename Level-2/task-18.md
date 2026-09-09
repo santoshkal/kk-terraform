@@ -25,3 +25,53 @@ The Terraform working directory is /home/bob/terraform.
 Right-click under the EXPLORER section in VS Code and select Open in Integrated Terminal to launch the terminal.
 
 Before submitting the task, ensure that terraform plan returns No changes. Your infrastructure matches the configuration.
+
+---
+
+# Solution:
+
+- `main.tf`:
+
+```tf
+resource "aws_sns_topic" "sns_topic" {
+  name = "datacenter-sns-topic"
+}
+
+resource "aws_instance" "kke_ec2" {
+  ami           = "ami-0c02fb55956c7d316"
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = "datacenter-ec2"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "kke_alarm" {
+  alarm_name                = "datacenter-alarm"
+  comparison_operator       = "GreaterThanOrEqualToThreshold"
+  evaluation_periods        = 1
+  metric_name               = "CPUUtilization"
+  namespace                 = "AWS/EC2"
+  period                    = 300
+  statistic                 = "Average"
+  threshold                 = 90
+  alarm_description         = "This metric monitors ec2 cpu utilization"
+  alarm_actions             = [aws_sns_topic.sns_topic.arn]
+  insufficient_data_actions = []
+}
+```
+
+
+- `outputs.tf`:
+
+```tf
+output "KKE_instance_name" {
+  description = "EC2 instance name"
+  value       = aws_instance.kke_ec2.tags["Name"]
+}
+
+output "KKE_alarm_name" {
+  description = "CloudWatch alarm name"
+  value       = aws_cloudwatch_metric_alarm.kke_alarm.alarm_name
+}
+```
