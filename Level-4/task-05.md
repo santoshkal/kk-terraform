@@ -1,4 +1,4 @@
-Managing Terraform Code with Symlinks
+# Managing Terraform Code with Symlinks
 
 The DevOps team is building a Terraform-based AWS pipeline using strict modular design, symbolic links for configuration reuse, and a sequential resource flow
 
@@ -46,4 +46,253 @@ Before submitting the task, you must run terraform apply to create the infrastru
 ---
 # Solution:
 
+## Directory structure:
 
+```bash
+.
+├── README.MD
+├── main.tf
+├── modules
+│   ├── sns
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   └── variables.tf -> /home/bob/terraform/variables.tf
+│   ├── ssm
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   └── variables.tf -> /home/bob/terraform/variables.tf
+│   └── stepfunctions
+│       ├── main.tf
+│       ├── outputs.tf
+│       └── variables.tf -> /home/bob/terraform/variables.tf
+├── outputs.tf
+├── provider.tf
+├── terraform.tfvars
+└── variables.tf
+```
+
+## Create symlink to root variables.tf to all modules:
+
+```bash
+ln -s /home/bob/terraform/variables.tf modules/sns/variables.tf
+ln -s /home/bob/terraform/variables.tf modules/ssm/variables.tf
+ln -s /home/bob/terraform/variables.tf modules/stepfunctions/variables.tf
+```
+
+- `./main.tf`:
+
+```tf
+module "sns" {
+  source = "./modules/sns"
+
+  KKE_SNS_TOPIC_NAME     = var.KKE_SNS_TOPIC_NAME
+  KKE_SSM_PARAM_NAME     = var.KKE_SSM_PARAM_NAME
+  KKE_STEP_FUNCTION_NAME = var.KKE_STEP_FUNCTION_NAME
+}
+
+module "ssm" {
+  source = "./modules/ssm"
+
+  KKE_SNS_TOPIC_NAME     = var.KKE_SNS_TOPIC_NAME
+  KKE_SSM_PARAM_NAME     = var.KKE_SSM_PARAM_NAME
+  KKE_STEP_FUNCTION_NAME = var.KKE_STEP_FUNCTION_NAME
+
+
+  depends_on = [
+    module.sns
+  ]
+}
+
+module "stepfunctions" {
+  source = "./modules/stepfunctions"
+
+  KKE_SNS_TOPIC_NAME     = var.KKE_SNS_TOPIC_NAME
+  KKE_SSM_PARAM_NAME     = var.KKE_SSM_PARAM_NAME
+  KKE_STEP_FUNCTION_NAME = var.KKE_STEP_FUNCTION_NAME
+
+  depends_on = [
+    module.ssm
+  ]
+}
+```
+
+- `./variables.tf`:
+
+```tf
+variable "KKE_SNS_TOPIC_NAME" {
+  description = "Name of the SNS topic"
+  type        = string
+}
+
+variable "KKE_SSM_PARAM_NAME" {
+  description = "Name of the SSM parameter"
+  type        = string
+}
+
+variable "KKE_STEP_FUNCTION_NAME" {
+  description = "Name of the Step Functions state machine"
+  type        = string
+}
+
+```
+
+- `./outputs.tf`:
+
+
+```tf
+output "kke_sns_topic_name" {
+  description = "Name of the SNS topic created"
+  value       = module.sns.sns_topic_name
+}
+
+output "kke_ssm_parameter_name" {
+  description = "Name of the SSM parameter created"
+  value       = module.ssm.ssm_parameter_name
+}
+
+output "kke_step_function_name" {
+  description = "Name of the Step Function created"
+  value       = module.stepfunctions.step_function_name
+}
+```
+
+- `./terraform.tfvars`:
+
+```tf
+KKE_SNS_TOPIC_NAME       = "devops-sns-topic"
+KKE_SSM_PARAM_NAME       = "devops-param"
+KKE_STEP_FUNCTION_NAME   = "devops-stepfunction"
+```
+
+## SNS module:
+
+- `./modules/sns/main.tf`:
+
+```tf
+resource "aws_sns_topic" "this" {
+  name = var.KKE_SNS_TOPIC_NAME
+}
+```
+
+- `./modules/sns/outputs.tf`:
+
+```tf
+output "sns_topic_name" {
+  description = "Name of the SNS topic"
+  value       = aws_sns_topic.this.name
+}
+
+output "sns_topic_arn" {
+  description = "ARN of the SNS topic"
+  value       = aws_sns_topic.this.arn
+}
+```
+
+## SSM parameter module:
+
+- `./modules/ssm/main.tf`:
+
+```tf
+resource "aws_ssm_parameter" "this" {
+  name  = var.KKE_SSM_PARAM_NAME
+  type  = "String"
+  value = "arn:aws:sns:us-east-1:000000000000:${var.KKE_SNS_TOPIC_NAME}"
+}
+```
+
+- `./modules/ssm/outputs.tf`:
+
+```tf
+output "ssm_parameter_name" {
+  description = "Name of the SSM parameter"
+  value       = aws_ssm_parameter.this.name
+}
+```
+
+## Setp Functions module:
+
+- `./modules/stepfunctions/main.tf`:
+
+```tf
+data "aws_ssm_parameter" "sns_param" {
+  name = var.KKE_SSM_PARAM_NAME
+}
+
+resource "aws_iam_role" "stepfunction" {
+  name = "${var.KKE_STEP_FUNCTION_NAME}-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Principal = {
+          Service = "states.amazonaws.com"
+        }
+
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "stepfunction_ssm" {
+  name = "${var.KKE_STEP_FUNCTION_NAME}-ssm-policy"
+  role = aws_iam_role.stepfunction.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          "ssm:GetParameter"
+        ]
+
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_sfn_state_machine" "this" {
+  name     = var.KKE_STEP_FUNCTION_NAME
+  role_arn = aws_iam_role.stepfunction.arn
+  definition = jsonencode({
+    StartAt = "ReadSSM"
+    States = {
+      ReadSSM = {
+        Type   = "Pass"
+        Result = {
+          SnsArn = data.aws_ssm_parameter.sns_param.value
+        }
+        End = true
+      }
+    }
+  })
+    depends_on = [
+    aws_iam_role_policy.stepfunction_ssm
+  ]
+}
+```
+
+- `./mocules/stepfunctions/outputs.tf`:
+
+```tf
+output "step_function_name" {
+  description = "Name of the Step Functions state machine"
+  value       = aws_sfn_state_machine.this.name
+}
+```
+
+
+
+Error:
+
+```
+Step Functions data source does not depend on the SSM parameter.
+```
