@@ -84,35 +84,25 @@ ln -s /home/bob/terraform/variables.tf modules/stepfunctions/variables.tf
 ```tf
 module "sns" {
   source = "./modules/sns"
-
-  KKE_SNS_TOPIC_NAME     = var.KKE_SNS_TOPIC_NAME
-  KKE_SSM_PARAM_NAME     = var.KKE_SSM_PARAM_NAME
+  KKE_SSM_PARAM_NAME = var.KKE_SSM_PARAM_NAME
+  KKE_SNS_TOPIC_NAME = var.KKE_SNS_TOPIC_NAME
   KKE_STEP_FUNCTION_NAME = var.KKE_STEP_FUNCTION_NAME
 }
 
 module "ssm" {
-  source = "./modules/ssm"
-
-  KKE_SNS_TOPIC_NAME     = var.KKE_SNS_TOPIC_NAME
-  KKE_SSM_PARAM_NAME     = var.KKE_SSM_PARAM_NAME
+  source     = "./modules/ssm"
+  KKE_SSM_PARAM_NAME = var.KKE_SSM_PARAM_NAME
+  KKE_SNS_TOPIC_NAME = var.KKE_SNS_TOPIC_NAME
   KKE_STEP_FUNCTION_NAME = var.KKE_STEP_FUNCTION_NAME
-
-
-  depends_on = [
-    module.sns
-  ]
+  depends_on = [module.sns]
 }
 
 module "stepfunctions" {
-  source = "./modules/stepfunctions"
-
-  KKE_SNS_TOPIC_NAME     = var.KKE_SNS_TOPIC_NAME
-  KKE_SSM_PARAM_NAME     = var.KKE_SSM_PARAM_NAME
+  source     = "./modules/stepfunctions"
+  KKE_SSM_PARAM_NAME = var.KKE_SSM_PARAM_NAME
+  KKE_SNS_TOPIC_NAME = var.KKE_SNS_TOPIC_NAME
   KKE_STEP_FUNCTION_NAME = var.KKE_STEP_FUNCTION_NAME
-
-  depends_on = [
-    module.ssm
-  ]
+  depends_on = [module.ssm]
 }
 ```
 
@@ -130,7 +120,7 @@ variable "KKE_SSM_PARAM_NAME" {
 }
 
 variable "KKE_STEP_FUNCTION_NAME" {
-  description = "Name of the Step Functions state machine"
+  description = "Name of the Step Function"
   type        = string
 }
 
@@ -141,18 +131,15 @@ variable "KKE_STEP_FUNCTION_NAME" {
 
 ```tf
 output "kke_sns_topic_name" {
-  description = "Name of the SNS topic created"
-  value       = module.sns.sns_topic_name
+  value = module.sns.kke_sns_topic
 }
 
 output "kke_ssm_parameter_name" {
-  description = "Name of the SSM parameter created"
-  value       = module.ssm.ssm_parameter_name
+  value = module.ssm.kke_sns_parameter_name
 }
 
 output "kke_step_function_name" {
-  description = "Name of the Step Function created"
-  value       = module.stepfunctions.step_function_name
+  value = module.stepfunctions.kke_step_function_name
 }
 ```
 
@@ -177,14 +164,8 @@ resource "aws_sns_topic" "this" {
 - `./modules/sns/outputs.tf`:
 
 ```tf
-output "sns_topic_name" {
-  description = "Name of the SNS topic"
-  value       = aws_sns_topic.this.name
-}
-
-output "sns_topic_arn" {
-  description = "ARN of the SNS topic"
-  value       = aws_sns_topic.this.arn
+output "kke_sns_topic" {
+  value = aws_sns_topic.this.name
 }
 ```
 
@@ -203,9 +184,8 @@ resource "aws_ssm_parameter" "this" {
 - `./modules/ssm/outputs.tf`:
 
 ```tf
-output "ssm_parameter_name" {
-  description = "Name of the SSM parameter"
-  value       = aws_ssm_parameter.this.name
+output "kke_sns_parameter_name" {
+  value = aws_ssm_parameter.this.name
 }
 ```
 
@@ -218,50 +198,21 @@ data "aws_ssm_parameter" "sns_param" {
   name = var.KKE_SSM_PARAM_NAME
 }
 
-resource "aws_iam_role" "stepfunction" {
+resource "aws_iam_role" "sfn_role" {
   name = "${var.KKE_STEP_FUNCTION_NAME}-role"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-
-    Statement = [
-      {
-        Effect = "Allow"
-
-        Principal = {
-          Service = "states.amazonaws.com"
-        }
-
-        Action = "sts:AssumeRole"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "stepfunction_ssm" {
-  name = "${var.KKE_STEP_FUNCTION_NAME}-ssm-policy"
-  role = aws_iam_role.stepfunction.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-
-    Statement = [
-      {
-        Effect = "Allow"
-
-        Action = [
-          "ssm:GetParameter"
-        ]
-
-        Resource = "*"
-      }
-    ]
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "states.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
   })
 }
 
 resource "aws_sfn_state_machine" "this" {
   name     = var.KKE_STEP_FUNCTION_NAME
-  role_arn = aws_iam_role.stepfunction.arn
+  role_arn = aws_iam_role.sfn_role.arn
   definition = jsonencode({
     StartAt = "ReadSSM"
     States = {
@@ -274,18 +225,14 @@ resource "aws_sfn_state_machine" "this" {
       }
     }
   })
-    depends_on = [
-    aws_iam_role_policy.stepfunction_ssm
-  ]
 }
 ```
 
 - `./mocules/stepfunctions/outputs.tf`:
 
 ```tf
-output "step_function_name" {
-  description = "Name of the Step Functions state machine"
-  value       = aws_sfn_state_machine.this.name
+output "kke_step_function_name" {
+  value = aws_sfn_state_machine.this.name
 }
 ```
 
